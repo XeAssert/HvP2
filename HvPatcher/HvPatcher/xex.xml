@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<xex>
+  <format>
+    <compressed/>
+  </format>
+  <mediatypes>
+    <harddisk/>
+    <livepackage/>
+    <signedpackage/>
+  </mediatypes>
+  <sysdll/>
+  <version major="2" minor="0" build="17559" qfe="0"/>
+</xex>

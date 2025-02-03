@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 14
+VisualStudioVersion = 14.0.24720.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HvPatcher", "HvPatcher\HvPatcher.vcxproj", "{837A915D-6525-4055-B411-4BB6D7EF7A35}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "xkelib", "xkelib\xkelib.vcxproj", "{83FEF217-22EE-4768-80BF-9F48D5B4564C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Xbox 360 = Debug|Xbox 360
+		Release|Xbox 360 = Release|Xbox 360
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{837A915D-6525-4055-B411-4BB6D7EF7A35}.Debug|Xbox 360.ActiveCfg = Debug|Xbox 360
+		{837A915D-6525-4055-B411-4BB6D7EF7A35}.Debug|Xbox 360.Build.0 = Debug|Xbox 360
+		{837A915D-6525-4055-B411-4BB6D7EF7A35}.Debug|Xbox 360.Deploy.0 = Debug|Xbox 360
+		{837A915D-6525-4055-B411-4BB6D7EF7A35}.Release|Xbox 360.ActiveCfg = Release|Xbox 360
+		{837A915D-6525-4055-B411-4BB6D7EF7A35}.Release|Xbox 360.Build.0 = Release|Xbox 360
+		{837A915D-6525-4055-B411-4BB6D7EF7A35}.Release|Xbox 360.Deploy.0 = Release|Xbox 360
+		{83FEF217-22EE-4768-80BF-9F48D5B4564C}.Debug|Xbox 360.ActiveCfg = Release|Xbox 360
+		{83FEF217-22EE-4768-80BF-9F48D5B4564C}.Debug|Xbox 360.Build.0 = Release|Xbox 360
+		{83FEF217-22EE-4768-80BF-9F48D5B4564C}.Release|Xbox 360.ActiveCfg = Release|Xbox 360
+		{83FEF217-22EE-4768-80BF-9F48D5B4564C}.Release|Xbox 360.Build.0 = Release|Xbox 360
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
