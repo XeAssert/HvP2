@@ -235,7 +235,7 @@
       <ConfigurationFile>$(ProjectDir)xex.xml</ConfigurationFile>
     </ImageXex>
     <ImageXex>
-      <BaseAddress>0x910A0000</BaseAddress>
+      <BaseAddress>0x91340000</BaseAddress>
     </ImageXex>
     <Deploy>
       <DeploymentType>CopyToHardDrive</DeploymentType>

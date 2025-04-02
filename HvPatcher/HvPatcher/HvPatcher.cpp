@@ -32,6 +32,537 @@ Detour<int> XexMenuGetFilesDetour;
 Detour<int> XexMenuStrStrDetour;
 
 
+
+//-------------------------------------------------------------------------------------
+// Name: MmAllocatePhysicalMemoryExHook
+// Desc: Hooks the debug builds MmAllocatePhysicalMemoryEx and if it succeeds then zero
+//		 the memory.
+//		 (Some builds just read into data and if it's not null it will treat it as valid data)
+//-------------------------------------------------------------------------------------
+int MmAllocatePhysicalMemoryExHook(int r3, int Size, int r5, int r6, int r7, int r8)
+{
+	int Result = MmAllocatePhysicalMemoryExDetour.CallOriginal(r3, Size, r5, r6, r7, r8);
+
+	if (Result != 0) ZeroMemory((PVOID)Result, Size);
+
+	return Result;
+}
+
+
+#define XexMenuSearchResultMax 30
+char szSearchResults[XexMenuSearchResultMax][50];
+//-------------------------------------------------------------------------------------
+// Name: XexMenuGetFilesHook
+// Desc: Hooks xexmenu's GetFiles function and if it's looking for xex's from a RS click
+//		 then check for all exe and xbe to add to the list too. 
+//-------------------------------------------------------------------------------------
+int XexMenuGetFilesHook(int r3, int OutData, int r5, bool bFilterXEX)
+{
+	int NumOfResults,
+		NumOfResults2,
+		i;
+
+	// "\\*.xex" xex part of the search string
+	int *pSearchFilter = (int*)0x8200376B;
+
+	// if we aren't filtering then just return
+	if (bFilterXEX == false)
+		return XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
+
+	// clear all the strings
+	ZeroMemory(szSearchResults, XexMenuSearchResultMax * 50);
+
+	// set the search extention to exe
+	*pSearchFilter = 'exe\0';
+
+	// find all the 'EXE' files
+	NumOfResults = XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
+
+	// copy the file names to our buffer
+	for (i = 0; i < NumOfResults; i++) 
+		strcpy(szSearchResults[i], (char*)(OutData + (i * 0xA04) + 4));
+
+	// set the search extention to xbe
+	*pSearchFilter = 'xbe\0';
+	NumOfResults2 = XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
+
+	// copy the file names to our buffer
+	for (i = 0; i < NumOfResults2; i++)
+		strcpy(szSearchResults[NumOfResults + i], (char*)(OutData + (i * 0xA04) + 4));
+
+
+	// add the sizes together
+	NumOfResults2 += NumOfResults;
+
+	// reset the search extention to xex
+	*pSearchFilter = 'xex\0';
+
+	// call the orignal function to find the xex files
+	NumOfResults = XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
+
+	// copy the exe & xbe results to the end result
+	for(i = 0; i < NumOfResults2; i++)
+		strcpy((char*)(OutData + ((NumOfResults+i) * 0xA04) + 4), szSearchResults[i]);
+
+	NumOfResults += NumOfResults2;
+
+	// if we don't have enough space
+	if (NumOfResults > XexMenuSearchResultMax)
+		return XexMenuSearchResultMax;
+
+	// add all our strings to our buffer
+	for(i = 0; i < NumOfResults; i++)
+		strcpy(szSearchResults[i], (char*)(OutData + (i * 0xA04) + 4));
+
+	// copy all the strings back to the return buffer
+	for (i = 0; i < NumOfResults; i++)
+	{
+		// say it's a .xex type
+		*(int *)(OutData + (i * 0xA04)) = 3;
+		// copy the names to the buffer
+		strcpy((char*)(OutData + (i * 0xA04) + 4), szSearchResults[i]);
+		strcpy((char*)(OutData + (i * 0xA04) + 4 + 0x400), szSearchResults[i]);
+	}
+
+	// return all the sizes
+	return NumOfResults;
+}
+
+//-------------------------------------------------------------------------------------
+// Name: XexMenuStrStrHook
+// Desc: Hooks xexmenu's strstr function and if it's checking the '.xex' extension then 
+//		 check for an '.exe'. if it doesn't find a '.exe' then just do what we hooked.
+//		 This will allow the .exe to be launched as a game.
+//		 
+//		 NOTE: there is a bug that if a file contains '.xex' in it's name it will think
+//			   it's an xex even if the extension is '.txt'
+//-------------------------------------------------------------------------------------
+int XexMenuStrStrHook(char* Str, const char * SubStr)
+{
+
+	// Check if xexmenu is doing a 'xex' compair on a filename ( only the search function does this )
+	if (strstr(SubStr, ".xex"))
+	{
+
+		// Check if the file is an exe and return 1 for a success
+		if (strstr(Str, ".exe") || strstr(Str, ".EXE"))
+			return 1;
+	}
+
+	// If it's not an 'exe' just do a normal functoin call
+	return (int)strstr(Str, SubStr);
+}
+
+//-------------------------------------------------------------------------------------
+// Name: MessageBoxThread()
+// Desc: Display a Messagebox Error depending on 'lpArg'
+//-------------------------------------------------------------------------------------
+DWORD WINAPI MessageBoxThread(LPVOID lpArg)
+{
+	DWORD dwArg = (DWORD)lpArg;
+
+	fMessageBoxThread = TRUE;
+
+	// only sleep if we got an error!
+	if (dwArg != 2)
+		Sleep(4000);
+
+	MESSAGEBOX_RESULT result;
+	XOVERLAPPED over;
+
+	LPCWSTR XShowMessageBoxUIButtons[] = { L"OK" };
+	LPCWSTR wText = L"";
+	LPCWSTR wTitle = L"HvP Error!";
+
+	// invalid Dashbord!
+	if (dwArg == 0)
+		wText = L"Your current dashbord is not supported!\nPlease Update to dash 17559.\n\nIf you are already on 17559 Please contact us so we can fix this bug.\n\nMessage Chr0m3x on discord or send a message in the #hvp-plugin-support channel on Obscure Gamers discord!";
+	else if (dwArg == 1)
+		wText = L"Your console HV is not supported\n\nIf you are on a JTAG/RGH on dash 17559 please contact us so we can fix this bug.\n\nMessage Chr0m3x on discord or send a message in the #hvp-plugin-support channel on Obscure Gamers discord!";
+	else if (dwArg == 2)
+	{
+		wTitle = L"HvP Message!";
+		wText = L"HvP2 is currently loaded!\n\nMade by 'Xx jAmes t xX'!\nSpecial thanks to 'Chr0m3 x MoDz'";
+	}
+
+	while (XShowMessageBoxUI(0, wTitle, wText, 1, XShowMessageBoxUIButtons, 0, 0, &result, &over) == ERROR_ACCESS_DENIED) Sleep(1000);
+
+	while (!XHasOverlappedIoCompleted(&over)) Sleep(200);
+
+	//so we can unload safely
+	fMessageBoxThread = FALSE;
+
+	// unload if we got an error!
+	if (dwArg != 2)
+		XexUnloadImageAndExitThread(::hModule, 0);
+
+	return TRUE;
+}
+
+//-------------------------------------------------------------------------------------
+// Name: TryAndHookXexMenu()
+// Desc: Was orignally just in XexpCompleteLoadHook but now if we have to re hook XexpCompleteLoad
+//		 we might have XexMenu already loaded without our hooks. so try and hook them.
+//-------------------------------------------------------------------------------------
+void TryAndHookXexMenu()
+{
+	// xexmenu 1.2 strstr address
+	if (MmIsAddressValid((PVOID)0x821AD9D0) && *(QWORD *)0x821AD9D0 == 0x89640000280B0000)
+	{
+		DBGSTR("[HvP2][XexpCompleteLoadHook]: Hooking XexMenu so we can launch 'EXE' Files!\n");
+		XexMenuStrStrDetour.SetupDetour(0x821AD9D0, XexMenuStrStrHook);
+		XexMenuGetFilesDetour.SetupDetour(0x820A4E28, XexMenuGetFilesHook);
+	}
+}
+
+
+//-------------------------------------------------------------------------------------
+// Name: XexpCompleteLoadHook()
+// Desc: Was originally only hooked to display the error codes of failed to launch games.
+//		 Now we check if 'xbox.xex' is being loaded and then unload if it is.
+//		 Also used to hook games / XexMenu as soon as it loads up.
+//-------------------------------------------------------------------------------------
+int XexpCompleteLoadHook(PHANDLE *pHandle, DWORD dwVersion)
+{
+	char szBuffer[MAX_PATH];
+
+	// copy the Loading modules name to our buffer
+	WideCharToMultiByte(CP_UTF8, NULL, (wchar_t*)((PLDR_DATA_TABLE_ENTRY)*pHandle)->BaseDllName.Buffer, -1, (char*)szBuffer, MAX_PATH, NULL, NULL);
+
+	DBGSTR("[HvP2][XexpCompleteLoadHook]: Loading '%s'\n", szBuffer);
+
+	// unload our hooks because we are trying to load an OG xbox game
+	if (strstr(szBuffer, "xbox.xex"))
+	{
+		DBGSTR("[HvP2][XexpCompleteLoadHook]: Original Xbox game detected! removing kernel hooks!\n");
+
+		XexpCompleteLoadDetour.TakeDownDetour();
+		XexpResolveImageImportsDetour.TakeDownDetour();
+
+		fIsOrignalXboxGame = TRUE;
+
+		// use this so dashlaunch will try to load again without our hooks and we won't crash!
+		return 0xC0000102; //NT_STATUS_FILE_CORRUPT_ERROR
+	}
+
+	int Result = XexpCompleteLoadDetour.CallOriginal(pHandle, dwVersion);
+
+	if(Result == 0xC0000142)
+		DBGSTR("[HvP2][XexpCompleteLoadHook]: 0xC0000142 (game might of manually aborted!)\n");
+	else
+		DBGSTR("[HvP2][XexpCompleteLoadHook]: 0x%08X\n", Result);
+
+	// if the result is 0 and the module is a title then setup some hooks
+	if (Result == 0 && (int)((PLDR_DATA_TABLE_ENTRY)*pHandle)->ImageBase == 0x82000000)
+	{
+
+		// see if XexMenu needs to be hooked
+		TryAndHookXexMenu();
+
+		// if we are loading a debug build
+		if (fIsLoadingDebugBuild)
+		{
+			fIsLoadingDebugBuild = FALSE;
+
+			MmAllocatePhysicalMemoryExDetour.SetupDetour(*pHandle, "xboxkrnl.exe", 0xBA, MmAllocatePhysicalMemoryExHook);
+		}
+
+
+		// fix some skate debug builds from crashing!
+		// sk82_na_zd
+		if (MmIsAddressValid((PVOID)0x82740818) && *(__int64 *)0x82740818 == 0x419A00F43D400014)
+		{
+			*(short *)0x82740818 = 0x4800;
+			*(short *)0x82740940 = 0x4800;
+		}
+
+		// sk82_na_r
+		if (MmIsAddressValid((PVOID)0x82557498) && *(__int64 *)0x82557498 == 0x419A00F43D400014)
+		{
+			*(short *)0x82557498 = 0x4800;
+			*(short *)0x825575C0 = 0x4800;
+		}
+	}
+
+	return Result;
+}
+
+
+//-------------------------------------------------------------------------------------
+// Name: XexpResolveImageImportsHook
+// Desc: Checks if the module has any imports to 'xbdm' and if it does then replace it 
+//		 with 'HvP2'.
+//		 All of our exports are just 'fake' xbdm imports
+//-------------------------------------------------------------------------------------
+int XexpResolveImageImportsHook(PLDR_DATA_TABLE_ENTRY hModule, int importTable, int r5)
+{
+	int NumOfStrings = *(int*)(importTable + 8);
+	char* Ptr = (char*)importTable + 0x0C;
+
+
+	for (int i = 0; i < NumOfStrings; i++)
+	{
+		int Strlen = strlen(Ptr);
+		if (GetModuleHandle(Ptr) == 0 || !strcmp(Ptr, "xbdm.xex"))
+		{
+			DBGSTR("[HvP2][XexpResolveImageImportsHook]: Patching Module %s\n", Ptr);
+			ZeroMemory(Ptr, Strlen);
+			strcpy(Ptr, "HvP2.xex");
+			fIsLoadingDebugBuild = TRUE;
+		}
+
+		if (i < (NumOfStrings - 1))
+		{
+			Ptr += Strlen;
+			Ptr = (char*)(((int)Ptr + 4) & 0xFFFFFFFC);
+		}
+	}
+	int Result = XexpResolveImageImportsDetour.CallOriginal(hModule, importTable, r5);
+	DBGSTR("[HvP2][XexpResolveImageImportsHook]: 0x%08X\n", Result);
+	return Result;
+}
+
+
+//-------------------------------------------------------------------------------------
+// Name: SetupHooks()
+// Desc: Sets up HV / kernel hooks
+//-------------------------------------------------------------------------------------
+DWORD WINAPI SetupHooks(LPVOID)
+{
+	// qwHv is just the first 4 bytes of the HV 
+	DWORD dwHvHeader, dwHv = 0x4E4E4497;
+	DWORD dwPtr;
+	DWORD dwXInputTick;
+
+	// 0x2AA58 in HV
+	QWORD qwHvAddress = 0x800001040002AA58;
+
+	// reset the state
+	dwUnloadXEXState = 0;
+
+	// wait 500ms
+	Sleep(500);
+
+	// if we have less then 4 letters in our handle name just set the buffer
+	if (((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Length < 16)
+	{
+		// Patch our module to be called HvP2.xex so xbdm imports resolve to us!
+		((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Length = 16;
+		((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Buffer = L"HvP2.xex";
+	}
+	else
+	{
+
+		// Patch our module to be named HvP2.xex so xbdm imports resolve to us!
+		wcscpy((wchar_t*)((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Buffer, L"HvP2.xex");
+		((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Length = 16;
+	}
+
+
+	DBGSTR("[HvP2]: Reading 4 bytes of HV... ");
+
+	// Read the first 4 bytes of the HV
+	dwHvHeader = HvxPeekDWORD(0);
+
+	DBGSTR("Done!\n");
+
+	DBGSTR("[HvP2]: Checking Header... ");
+
+
+	// check if the 4 bytes are what we are expecting!
+	if( dwHvHeader != dwHv )
+	{
+		DbgPrint("[HvP2]: Unsuported Dash/HV version! (0x%08X != %08X)\n", dwHvHeader, dwHv);
+		CreateThread(0, 0, MessageBoxThread, 0, 0, 0);
+		Sleep(100);
+		return TRUE;
+	}
+
+	DBGSTR("Dash Version supported!\n");
+
+	DBGSTR("[HvP2]: Checking HV Addresses!... ");
+
+	// read 0x2AA48 and see if the bytes match up, just to double check RGH3 addresses are right & that we aren't on a devkit with spoofed results
+	if (HvxPeekDWORD(qwHvAddress - 0x10) != 0x9161006C)
+	{
+		DbgPrint("[HvP2]: Unsuported HV!\n");
+		CreateThread(0, 0, MessageBoxThread, (LPVOID)1, 0, 0);
+		Sleep(100);
+		return TRUE;
+	}
+
+	DBGSTR("HV Addresses supported!\n");
+
+	DBGSTR("[HvP2]: Setting up HV Patches!... ");
+
+
+	// 0x2AA58 in HV
+	HvxPokeDWORD(qwHvAddress, 0x60000000); // remove failed 0xC0000225 load reponse in 'HvxResolveImports'
+
+
+	DBGSTR("Done!\n");
+
+	DBGSTR("[HvP2]: Setting up Kernel Patches!... ");
+
+
+	// XexpCompleteImageLoad make '0xC0000225' failed to a li r3, 0; blr
+
+	/*
+	8007AB78  lis r30,-32762		; 8006h
+	8007AB7C  ori r30,r30,5292		; 14ACh
+	8007AB80  b 8007AA94
+	*/
+
+	dwPtr = 0x8007AB78;
+	*(short *)(dwPtr + 2) = (short)0x8006; //0x800614AC
+	*(short *)(dwPtr + 4 + 2) = 0x14AC; // 0x800614AC
+	MakeBranchTo(dwPtr + 8, dwPtr - 0xE4); // 0x8007AB80 = b 0x8007AA94
+
+SetupKrnlHooks:
+
+	XexpCompleteLoadDetour.SetupDetour(0x8007D528, XexpCompleteLoadHook);
+	XexpResolveImageImportsDetour.SetupDetour(0x80079D48, XexpResolveImageImportsHook);
+
+	// try and hook XexMenu incase we have loaded it.
+	TryAndHookXexMenu();
+
+	DBGSTR("Done!\n");
+
+	DBGSTR("\n\n\n");
+	DbgPrint("[HvP2]: Made by 'Xx jAmes t xX' for dash 17559\n");
+	DbgPrint("[HvP2]: Special thanks to 'Chr0m3 x MoDz' for testing and making me update this app again!\n");
+
+	// so we know we are running!
+	dwUnloadXEXState = 1;
+
+	// just a loop incase we need to setup our hooks again
+	for (;;)
+	{
+		char szBuffer[MAX_PATH];
+		PLDR_DATA_TABLE_ENTRY hModule;
+		XINPUT_STATE XInput;
+
+		// get the controller input on controller 0 and display a text box that we are loaded!
+		if (XInputGetState(0, &XInput) == ERROR_SUCCESS)
+		{
+			// if Start & Back is held down at the same time!
+			if (XInput.Gamepad.wButtons & XINPUT_GAMEPAD_START && XInput.Gamepad.wButtons & XINPUT_GAMEPAD_BACK)
+			{
+				// set the tick count to now
+				if (dwXInputTick == 0)
+					dwXInputTick = GetTickCount();
+
+				// check if the buttons have been held for at least 4 seconds
+				else if ((GetTickCount() - dwXInputTick) > 4000)
+				{
+					// reset the count
+					dwXInputTick = 0;
+
+					// Display a message box saying we are loaded!
+					CreateThread(0, 0, MessageBoxThread, (LPVOID)2, 0, 0);
+				}
+			}
+
+			// otherwise reset the tick count
+			else
+			{
+				dwXInputTick = 0;
+			}
+		}
+
+
+		// stop this thread because we are unloading!
+		if (dwUnloadXEXState == 2)
+		{
+			// tell the DllMain we have exited!
+			dwUnloadXEXState = 3;
+			return TRUE;
+		}
+
+		// if we are playing an original xbox game check if we have stopped to setup out hooks again!
+		if (fIsOrignalXboxGame)
+		{
+			// get the title module handle
+			if (XexPcToFileHeader((PVOID)0x82000000, &hModule))
+			{
+				// copy the name to our buffer
+				WideCharToMultiByte(CP_UTF8, NULL, hModule->BaseDllName.Buffer, -1, (char*)szBuffer, MAX_PATH, NULL, NULL);
+				
+				// if we aren't playing and orignal xbox1 game then setup hooks!
+				if (strstr(szBuffer, "xefu") == 0 && strstr(szBuffer, "xbox.xex") == 0)
+				{
+					fIsOrignalXboxGame = FALSE;
+					DBGSTR("[HvP2]: Setting up kernel hooks again!\n");
+					goto SetupKrnlHooks;
+				}
+			}
+		}
+
+		Sleep(500);
+	}
+
+	return TRUE;
+}
+
+
+//-----------------------------------------------------------------------------
+// Name: DllMain()
+// Desc: The function which is called at initialization/termination of the process
+//       and thread and whenever LoadLibrary() or FreeLibrary() are called.
+//       The DllMain routine should not be used to load another module or call a
+//       routine that may block.
+//-----------------------------------------------------------------------------
+BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
+{
+	if (dwReason == DLL_PROCESS_DETACH)
+	{
+		DBGSTR("[HvP2]: DLL_PROCESS_DETACH\n");
+
+
+		// if we have the main thread running then stop it
+		if (dwUnloadXEXState == 1)
+		{
+			// state 2 is to tell it to exit
+			dwUnloadXEXState = 2;
+
+			// wait till the state changes
+			while (dwUnloadXEXState == 2)
+				Sleep(100);
+		}
+
+
+		// if the messagebox thread is running just wait
+		while (fMessageBoxThread == TRUE)
+			Sleep(100);
+
+		// take down our hooks!
+		XexpCompleteLoadDetour.TakeDownDetour();
+		XexpResolveImageImportsDetour.TakeDownDetour();
+		MmAllocatePhysicalMemoryExDetour.TakeDownDetour();
+		XexMenuStrStrDetour.TakeDownDetour();
+		XexMenuGetFilesDetour.TakeDownDetour();
+
+		Sleep(20);
+	}
+
+	if (dwReason == DLL_PROCESS_ATTACH)
+	{
+		DBGSTR("[HvP2]: DLL_PROCESS_ATTACH\n");
+
+		// save our module handle
+		::hModule = hModule;
+
+		// set the reference count to 1 so we can unload if we want to
+		((PLDR_DATA_TABLE_ENTRY)hModule)->LoadCount = 1;
+
+		// start our thread for hooking/unhooking while loading orignal xbox games
+		ExCreateThread(0, 0, 0, 0, SetupHooks, 0, EX_CREATE_FLAG_CORE5 | EX_CREATE_FLAG_SYSTEM);
+	}
+	
+	return TRUE;
+}
+
+
 #pragma region Exports
 
 int ExportSub0() { DBGSTR("[HvP2] Called 0\n"); return 0x002da0000; }
@@ -60,7 +591,7 @@ typedef struct _DM_XBE {
 } DM_XBE, *PDM_XBE;
 
 int ExportSub16(LPCSTR szName, PDM_XBE pdxbe) {
-	DBGSTR("[HvP2] Called DmGetXbeInfo\n"); 
+	DBGSTR("[HvP2] Called DmGetXbeInfo\n");
 
 	//return ((int(*)(...))0x91007B70)(szName, pdxbe);
 
@@ -102,7 +633,7 @@ int ExportSub18() { DBGSTR("[HvP2] Called 18\n"); return 0; }
 int ExportSub19() { DBGSTR("[HvP2] Called 19\n"); return 0; }
 int ExportSub20() { DBGSTR("[HvP2] Called 20\n"); return 0; }
 // DmIsDebuggerPresent
-int ExportSub21() 
+int ExportSub21()
 {
 	//DBGSTR("[HvP2] Called DmIsDebuggerPresent\n");
 	return 0x2DA0000;
@@ -298,7 +829,7 @@ int ExportSub161(int Ptr) {
 
 	// just copy what I dumped off my xbox on rgloader xD
 	memcpy((PVOID)Ptr, bSystemInfo, 0x20);
-	
+
 	return 0x02da0000;
 }
 int ExportSub162() { DBGSTR("[HvP2] Called 162\n"); return 0; }
@@ -371,7 +902,7 @@ int ExportSub213() { DBGSTR("[HvP2] Called 213\n"); return 0; }
 // DmGetConsoleDebugMemoryStatus
 //#include <xbdm.h>
 int ExportSub214(int* pdwConsoleMemConfig)
-{ 
+{
 	DBGSTR("[HvP2] Called DmGetConsoleDebugMemoryStatus\n");
 	*pdwConsoleMemConfig = 0;
 	return 0x02DA0000;
@@ -677,497 +1208,3 @@ int ExportSub512() { DBGSTR("[HvP2] Called 512\n"); return 0; }
 
 
 #pragma endregion
-
-
-//-------------------------------------------------------------------------------------
-// Name: MmAllocatePhysicalMemoryExHook
-// Desc: Hooks the debug builds MmAllocatePhysicalMemoryEx and if it succeeds then zero
-//		 the memory.
-//		 (Some builds just read into data and if it's not null it will treat it as valid data)
-//-------------------------------------------------------------------------------------
-int MmAllocatePhysicalMemoryExHook(int r3, int Size, int r5, int r6, int r7, int r8)
-{
-	int Result = MmAllocatePhysicalMemoryExDetour.CallOriginal(r3, Size, r5, r6, r7, r8);
-
-	if (Result != 0) ZeroMemory((PVOID)Result, Size);
-
-	return Result;
-}
-
-
-#define XexMenuSearchResultMax 30
-char szSearchResults[XexMenuSearchResultMax][50];
-//-------------------------------------------------------------------------------------
-// Name: XexMenuGetFilesHook
-// Desc: Hooks xexmenu's GetFiles function and if it's looking for xex's from a RS click
-//		 then check for all exe and xbe to add to the list too. 
-//-------------------------------------------------------------------------------------
-int XexMenuGetFilesHook(int r3, int OutData, int r5, bool bFilterXEX)
-{
-	int NumOfResults,
-		NumOfResults2,
-		i;
-
-	// "\\*.xex" xex part of the search string
-	int *pSearchFilter = (int*)0x8200376B;
-
-	// if we aren't filtering then just return
-	if (bFilterXEX == false)
-		return XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
-
-	// clear all the strings
-	ZeroMemory(szSearchResults, XexMenuSearchResultMax * 50);
-
-	// set the search extention to exe
-	*pSearchFilter = 'exe\0';
-
-	// find all the 'EXE' files
-	NumOfResults = XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
-
-	// copy the file names to our buffer
-	for (i = 0; i < NumOfResults; i++) 
-		strcpy(szSearchResults[i], (char*)(OutData + (i * 0xA04) + 4));
-
-	// set the search extention to xbe
-	*pSearchFilter = 'xbe\0';
-	NumOfResults2 = XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
-
-	// copy the file names to our buffer
-	for (i = 0; i < NumOfResults2; i++)
-		strcpy(szSearchResults[NumOfResults + i], (char*)(OutData + (i * 0xA04) + 4));
-
-
-	// add the sizes together
-	NumOfResults2 += NumOfResults;
-
-	// reset the search extention to xex
-	*pSearchFilter = 'xex\0';
-
-	// call the orignal function to find the xex files
-	NumOfResults = XexMenuGetFilesDetour.CallOriginal(r3, OutData, r5, bFilterXEX);
-
-	// copy the exe & xbe results to the end result
-	for(i = 0; i < NumOfResults2; i++)
-		strcpy((char*)(OutData + ((NumOfResults+i) * 0xA04) + 4), szSearchResults[i]);
-
-	NumOfResults += NumOfResults2;
-
-	// if we don't have enough space
-	if (NumOfResults > XexMenuSearchResultMax)
-		return XexMenuSearchResultMax;
-
-	// add all our strings to our buffer
-	for(i = 0; i < NumOfResults; i++)
-		strcpy(szSearchResults[i], (char*)(OutData + (i * 0xA04) + 4));
-
-	// copy all the strings back to the return buffer
-	for (i = 0; i < NumOfResults; i++)
-	{
-		// say it's a .xex type
-		*(int *)(OutData + (i * 0xA04)) = 3;
-		// copy the names to the buffer
-		strcpy((char*)(OutData + (i * 0xA04) + 4), szSearchResults[i]);
-		strcpy((char*)(OutData + (i * 0xA04) + 4 + 0x400), szSearchResults[i]);
-	}
-
-	// return all the sizes
-	return NumOfResults;
-}
-
-//-------------------------------------------------------------------------------------
-// Name: XexMenuStrStrHook
-// Desc: Hooks xexmenu's strstr function and if it's checking the '.xex' extension then 
-//		 check for an '.exe'. if it doesn't find a '.exe' then just do what we hooked.
-//		 This will allow the .exe to be launched as a game.
-//		 
-//		 NOTE: there is a bug that if a file contains '.xex' in it's name it will think
-//			   it's an xex even if the extension is '.txt'
-//-------------------------------------------------------------------------------------
-int XexMenuStrStrHook(char* Str, const char * SubStr)
-{
-
-	// Check if xexmenu is doing a 'xex' compair on a filename ( only the search function does this )
-	if (strstr(SubStr, ".xex"))
-	{
-
-		// Check if the file is an exe and return 1 for a success
-		if (strstr(Str, ".exe") || strstr(Str, ".EXE"))
-			return 1;
-	}
-
-	// If it's not an 'exe' just do a normal functoin call
-	return (int)strstr(Str, SubStr);
-}
-
-//-------------------------------------------------------------------------------------
-// Name: MessageBoxThread()
-// Desc: Display a Messagebox Error depending on 'lpArg'
-//-------------------------------------------------------------------------------------
-DWORD WINAPI MessageBoxThread(LPVOID lpArg)
-{
-	DWORD dwArg = (DWORD)lpArg;
-
-	fMessageBoxThread = TRUE;
-
-	Sleep(4000);
-
-	MESSAGEBOX_RESULT result;
-	XOVERLAPPED over;
-
-	LPCWSTR XShowMessageBoxUIButtons[] = { L"OK" };
-	LPCWSTR wtext = L"";
-
-	// invalid Dashbord!
-	if (dwArg == 0)
-		wtext = L"Your current dashbord is not supported!\nPlease Update to dash 17559.\n\nIf you are already on 17559 Please contact us so we can fix this bug.\n\nMessage Chr0m3x on discord or send a message in the #hvp-plugin-support channel on Obscure Gamers discord!";
-	if (dwArg == 1)
-		wtext = L"Your console HV is not supported\n\nIf you are on a JTAG/RGH on dash 17559 please contact us so we can fix this bug.\n\nMessage Chr0m3x on discord or send a message in the #hvp-plugin-support channel on Obscure Gamers discord!";
-
-	while (XShowMessageBoxUI(0, L"HvP Error!", wtext, 1, XShowMessageBoxUIButtons, 0, 0, &result, &over) == ERROR_ACCESS_DENIED) Sleep(1000);
-
-	while (!XHasOverlappedIoCompleted(&over)) Sleep(200);
-
-	//so we can unload safely
-	fMessageBoxThread = FALSE;
-
-	// unload
-	XexUnloadImageAndExitThread(::hModule, 0);
-
-	return TRUE;
-}
-
-//-------------------------------------------------------------------------------------
-// Name: TryAndHookXexMenu()
-// Desc: Was orignally just in XexpCompleteLoadHook but now if we have to re hook XexpCompleteLoad
-//		 we might have XexMenu already loaded without our hooks. so try and hook them.
-//-------------------------------------------------------------------------------------
-void TryAndHookXexMenu()
-{
-	// xexmenu 1.2 strstr address
-	if (MmIsAddressValid((PVOID)0x821AD9D0) && *(QWORD *)0x821AD9D0 == 0x89640000280B0000)
-	{
-		DBGSTR("[HvP2][XexpCompleteLoadHook]: Hooking XexMenu so we can launch 'EXE' Files!\n");
-		XexMenuStrStrDetour.SetupDetour(0x821AD9D0, XexMenuStrStrHook);
-		XexMenuGetFilesDetour.SetupDetour(0x820A4E28, XexMenuGetFilesHook);
-	}
-}
-
-
-//-------------------------------------------------------------------------------------
-// Name: XexpCompleteLoadHook()
-// Desc: Was originally only hooked to display the error codes of failed to launch games.
-//		 Now we check if 'xbox.xex' is being loaded and then unload if it is.
-//		 Also used to hook games / XexMenu as soon as it loads up.
-//-------------------------------------------------------------------------------------
-int XexpCompleteLoadHook(PHANDLE *pHandle, DWORD dwVersion)
-{
-	char szBuffer[MAX_PATH];
-
-	// copy the Loading modules name to our buffer
-	WideCharToMultiByte(CP_UTF8, NULL, (wchar_t*)((PLDR_DATA_TABLE_ENTRY)*pHandle)->BaseDllName.Buffer, -1, (char*)szBuffer, MAX_PATH, NULL, NULL);
-
-	DBGSTR("[HvP2][XexpCompleteLoadHook]: Loading '%s'\n", szBuffer);
-
-	// unload our hooks because we are trying to load an OG xbox game
-	if (strstr(szBuffer, "xbox.xex"))
-	{
-		DBGSTR("[HvP2][XexpCompleteLoadHook]: Original Xbox game detected! removing kernel hooks!\n");
-
-		XexpCompleteLoadDetour.TakeDownDetour();
-		XexpResolveImageImportsDetour.TakeDownDetour();
-
-		fIsOrignalXboxGame = TRUE;
-
-		// use this so dashlaunch will try to load again without our hooks and we won't crash!
-		return 0xC0000102; //NT_STATUS_FILE_CORRUPT_ERROR
-	}
-
-	int Result = XexpCompleteLoadDetour.CallOriginal(pHandle, dwVersion);
-
-	if(Result == 0xC0000142)
-		DBGSTR("[HvP2][XexpCompleteLoadHook]: 0xC0000142 (game might of manually aborted!)\n");
-	else
-		DBGSTR("[HvP2][XexpCompleteLoadHook]: 0x%08X\n", Result);
-
-	// if the result is 0 and the module is a title then setup some hooks
-	if (Result == 0 && (int)((PLDR_DATA_TABLE_ENTRY)*pHandle)->ImageBase == 0x82000000)
-	{
-
-		// see if XexMenu needs to be hooked
-		TryAndHookXexMenu();
-
-		// if we are loading a debug build
-		if (fIsLoadingDebugBuild)
-		{
-			fIsLoadingDebugBuild = FALSE;
-
-			MmAllocatePhysicalMemoryExDetour.SetupDetour(*pHandle, "xboxkrnl.exe", 0xBA, MmAllocatePhysicalMemoryExHook);
-		}
-
-
-		// fix some skate debug builds from crashing!
-		// sk82_na_zd
-		if (MmIsAddressValid((PVOID)0x82740818) && *(__int64 *)0x82740818 == 0x419A00F43D400014)
-		{
-			*(short *)0x82740818 = 0x4800;
-			*(short *)0x82740940 = 0x4800;
-		}
-
-		// sk82_na_r
-		if (MmIsAddressValid((PVOID)0x82557498) && *(__int64 *)0x82557498 == 0x419A00F43D400014)
-		{
-			*(short *)0x82557498 = 0x4800;
-			*(short *)0x825575C0 = 0x4800;
-		}
-	}
-
-	return Result;
-}
-
-
-//-------------------------------------------------------------------------------------
-// Name: XexpResolveImageImportsHook
-// Desc: Checks if the module has any imports to 'xbdm' and if it does then replace it 
-//		 with 'HvP2'.
-//		 All of our exports are just 'fake' xbdm imports
-//-------------------------------------------------------------------------------------
-int XexpResolveImageImportsHook(PLDR_DATA_TABLE_ENTRY hModule, int importTable, int r5)
-{
-	int NumOfStrings = *(int*)(importTable + 8);
-	char* Ptr = (char*)importTable + 0x0C;
-
-
-	for (int i = 0; i < NumOfStrings; i++)
-	{
-		int Strlen = strlen(Ptr);
-		if (GetModuleHandle(Ptr) == 0 || !strcmp(Ptr, "xbdm.xex"))
-		{
-			DBGSTR("[HvP2][XexpResolveImageImportsHook]: Patching Module %s\n", Ptr);
-			ZeroMemory(Ptr, Strlen);
-			strcpy(Ptr, "HvP2.xex");
-			fIsLoadingDebugBuild = TRUE;
-		}
-
-		if (i < (NumOfStrings - 1))
-		{
-			Ptr += Strlen;
-			Ptr = (char*)(((int)Ptr + 4) & 0xFFFFFFFC);
-		}
-	}
-	int Result = XexpResolveImageImportsDetour.CallOriginal(hModule, importTable, r5);
-	DBGSTR("[HvP2][XexpResolveImageImportsHook]: 0x%08X\n", Result);
-	return Result;
-}
-
-
-//-------------------------------------------------------------------------------------
-// Name: SetupHooks()
-// Desc: Sets up HV / kernel hooks
-//-------------------------------------------------------------------------------------
-DWORD WINAPI SetupHooks(LPVOID)
-{
-	// qwHv is just the first 4 bytes of the HV 
-	DWORD dwHvHeader, dwHv = 0x4E4E4497;
-	DWORD dwPtr;
-
-	// 0x2AA58 in HV
-	QWORD qwHvAddress = 0x800001040002AA58;
-
-	// reset the state
-	dwUnloadXEXState = 0;
-
-	// wait 500ms
-	Sleep(500);
-
-	// if we have less then 4 letters in our handle name just set the buffer
-	if (((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Length < 16)
-	{
-		// Patch our module to be called HvP2.xex so xbdm imports resolve to us!
-		((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Length = 16;
-		((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Buffer = L"HvP2.xex";
-	}
-	else
-	{
-
-		// Patch our module to be named HvP2.xex so xbdm imports resolve to us!
-		wcscpy((wchar_t*)((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Buffer, L"HvP2.xex");
-		((PLDR_DATA_TABLE_ENTRY)hModule)->BaseDllName.Length = 16;
-	}
-
-
-	DBGSTR("[HvP2]: Reading 4 bytes of HV... ");
-
-	// Read the first 4 bytes of the HV
-	dwHvHeader = HvxPeekDWORD(0);
-
-	DBGSTR("Done!\n");
-
-	DBGSTR("[HvP2]: Checking Header... ");
-
-
-	// check if the 4 bytes are what we are expecting!
-	if( dwHvHeader != dwHv )
-	{
-		DbgPrint("[HvP2]: Unsuported Dash/HV version! (0x%08X != %08X)\n", dwHvHeader, dwHv);
-		CreateThread(0, 0, MessageBoxThread, 0, 0, 0);
-		Sleep(100);
-		return TRUE;
-	}
-
-	DBGSTR("Dash Version supported!\n");
-
-	DBGSTR("[HvP2]: Checking HV Addresses!... ");
-
-	// read 0x2AA48 and see if the bytes match up, just to double check RGH3 addresses are right & that we aren't on a devkit with spoofed results
-	if (HvxPeekDWORD(qwHvAddress - 0x10) != 0x9161006C)
-	{
-		DbgPrint("[HvP2]: Unsuported HV!\n", dwHvHeader, dwHv);
-		CreateThread(0, 0, MessageBoxThread, (LPVOID)1, 0, 0);
-		Sleep(100);
-		return TRUE;
-	}
-
-	DBGSTR("HV Addresses supported!\n");
-
-	DBGSTR("[HvP2]: Setting up HV Patches!... ");
-
-
-	// 0x2AA58 in HV
-	HvxPokeDWORD(qwHvAddress, 0x60000000); // remove failed 0xC0000225 load reponse in 'HvxResolveImports'
-
-
-	DBGSTR("Done!\n");
-
-	DBGSTR("[HvP2]: Setting up Kernel Patches!... ");
-
-
-	// XexpCompleteImageLoad make '0xC0000225' failed to a li r3, 0; blr
-
-	/*
-	8007AB78  lis r30,-32762		; 8006h
-	8007AB7C  ori r30,r30,5292		; 14ACh
-	8007AB80  b 8007A2F4
-	*/
-
-	dwPtr = 0x8007AB78;
-	*(short *)(dwPtr + 2) = (short)0x8006; //0x800614AC
-	*(short *)(dwPtr + 4 + 2) = 0x14AC; // 0x800614AC
-
-
-	MakeBranchTo(dwPtr + 8, dwPtr - 0xE4); // 0x8007AB80 = b 0x8007AA94
-
-SetupKrnlHooks:
-
-	XexpCompleteLoadDetour.SetupDetour(0x8007D528, XexpCompleteLoadHook);
-	XexpResolveImageImportsDetour.SetupDetour(0x80079D48, XexpResolveImageImportsHook);
-
-	// try and hook XexMenu incase we have loaded it.
-	TryAndHookXexMenu();
-
-	DBGSTR("Done!\n");
-
-	DBGSTR("\n\n\n");
-	DbgPrint("[HvP2]: Made by 'Xx jAmes t xX' for dash 17559\n");
-	DbgPrint("[HvP2]: Special thanks to 'Chr0m3 x MoDz' for testing and making me update this app again!\n");
-
-	// so we know we are running!
-	dwUnloadXEXState = 1;
-
-	// just a loop incase we need to setup our hooks again
-	for (;;)
-	{
-		char szBuffer[MAX_PATH];
-		PLDR_DATA_TABLE_ENTRY hModule;
-
-
-		// stop this thread because we are unloading!
-		if (dwUnloadXEXState == 2)
-		{
-			// tell the DllMain we have exited!
-			dwUnloadXEXState = 3;
-			return TRUE;
-		}
-
-		// if we are playing an original xbox game check if we have stopped to setup out hooks again!
-		if (fIsOrignalXboxGame)
-		{
-			// get the title module handle
-			if (XexPcToFileHeader((PVOID)0x82000000, &hModule))
-			{
-				// copy the name to our buffer
-				WideCharToMultiByte(CP_UTF8, NULL, hModule->BaseDllName.Buffer, -1, (char*)szBuffer, MAX_PATH, NULL, NULL);
-				
-				// if we aren't playing and orignal xbox1 game then setup hooks!
-				if (strstr(szBuffer, "xefu") == 0 && strstr(szBuffer, "xbox.xex") == 0)
-				{
-					fIsOrignalXboxGame = FALSE;
-					DBGSTR("[HvP2]: Setting up kernel hooks again!\n");
-					goto SetupKrnlHooks;
-				}
-			}
-		}
-
-		Sleep(500);
-	}
-
-	return TRUE;
-}
-
-
-//-----------------------------------------------------------------------------
-// Name: DllMain()
-// Desc: The function which is called at initialization/termination of the process
-//       and thread and whenever LoadLibrary() or FreeLibrary() are called.
-//       The DllMain routine should not be used to load another module or call a
-//       routine that may block.
-//-----------------------------------------------------------------------------
-BOOL APIENTRY DllMain(HANDLE hModule, DWORD dwReason, LPVOID lpReserved)
-{
-	if (dwReason == DLL_PROCESS_DETACH)
-	{
-		DBGSTR("[HvP2]: DLL_PROCESS_DETACH\n");
-
-
-		// if we have the main thread running then stop it
-		if (dwUnloadXEXState == 1)
-		{
-			// state 2 is to tell it to exit
-			dwUnloadXEXState = 2;
-
-			// wait till the state changes
-			while (dwUnloadXEXState == 2)
-				Sleep(100);
-		}
-
-
-		// if the messagebox thread is running just wait
-		while (fMessageBoxThread == TRUE)
-			Sleep(100);
-
-		// take down our hooks!
-		XexpCompleteLoadDetour.TakeDownDetour();
-		XexpResolveImageImportsDetour.TakeDownDetour();
-		MmAllocatePhysicalMemoryExDetour.TakeDownDetour();
-		XexMenuStrStrDetour.TakeDownDetour();
-		XexMenuGetFilesDetour.TakeDownDetour();
-
-		Sleep(20);
-	}
-
-	if (dwReason == DLL_PROCESS_ATTACH)
-	{
-		DBGSTR("[HvP2]: DLL_PROCESS_ATTACH\n");
-
-		// save our module handle
-		::hModule = hModule;
-
-		// set the reference count to 1 so we can unload if we want to
-		((PLDR_DATA_TABLE_ENTRY)hModule)->LoadCount = 1;
-
-		// start our thread for hooking/unhooking while loading orignal xbox games
-		ExCreateThread(0, 0, 0, 0, SetupHooks, 0, EX_CREATE_FLAG_CORE5 | EX_CREATE_FLAG_SYSTEM);
-	}
-	
-	return TRUE;
-}
-
