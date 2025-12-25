@@ -836,20 +836,56 @@ int ExportSub162() { DBGSTR("[HvP2] Called 162\n"); return 0; }
 int ExportSub163() { DBGSTR("[HvP2] Called 163\n"); return 0; }
 int ExportSub164() { DBGSTR("[HvP2] Called 164\n"); return 0; }
 // DmQueryTitleMemoryStatistics
-byte bSystemMemoryInfo[] = { 0x00, 0x00, 0x00, 0x20, 0x00, 0x02, 0x00, 0x00,
-0x07, 0x60, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x44, 0x97, 0x00, 0x00, 0x00,
-0x02, 0x00, 0x00, 0x53, 0x08, 0x00, 0x00, 0x40, 0x00, 0x00, 0x23, 0x00, 0x00,
-0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-int ExportSub165(int Ptr) {
+typedef struct _DM_MEMORY_STATISTICS {
+	DWORD cbSize;
+	DWORD TotalPages;
+	DWORD AvailablePages;
+	DWORD StackPages;
+	DWORD VirtualPageTablePages;
+	DWORD SystemPageTablePages;
+	DWORD PoolPages;
+	DWORD VirtualMappedPages;
+	DWORD ImagePages;
+	DWORD FileCachePages;
+	DWORD ContiguousPages;
+	DWORD DebuggerPages;
+} DM_MEMORY_STATISTICS, *PDM_MEMORY_STATISTICS;
+C_ASSERT(sizeof(DM_MEMORY_STATISTICS) == 48);
+
+int ExportSub165(PDM_MEMORY_STATISTICS stats_ptr) {
 	//DBGSTR("[HvP2] Called DmQueryTitleMemoryStatistics\n");
+	
+	if (stats_ptr->cbSize != sizeof(DM_MEMORY_STATISTICS)) {
+		return E_INVALIDARG;
+	}
+	
+	MM_STATISTICS stats;
+	stats.Length = sizeof(MM_STATISTICS);
+	DWORD result = MmQueryStatistics(&stats);
+	if (result < 0) {
+		return HRESULT_FROM_NT(result);
+	}
 
-	if (!Ptr)
-		return 0x82DA0017;
+	stats_ptr->AvailablePages = stats.TitleAvailablePages;
+	stats_ptr->StackPages = stats.TitleStackPages;
+	stats_ptr->VirtualPageTablePages = stats.TitlePageTablePages;
+	stats_ptr->SystemPageTablePages = 0;
+	stats_ptr->PoolPages = stats.TitlePoolPages;
+	stats_ptr->VirtualMappedPages = stats.TitleHeapPages + stats.TitleVirtualPages;
+	stats_ptr->ImagePages = stats.TitleImagePages;
+	stats_ptr->FileCachePages = stats.TitleCachePages;
+	stats_ptr->ContiguousPages = stats.TitlePhysicalPages;
+	stats_ptr->DebuggerPages = 0;
+	stats_ptr->TotalPages = stats_ptr->AvailablePages
+		+ stats_ptr->StackPages
+		+ stats_ptr->VirtualPageTablePages
+		+ stats_ptr->PoolPages
+		+ stats_ptr->VirtualMappedPages
+		+ stats_ptr->ImagePages
+		+ stats_ptr->FileCachePages
+		+ stats_ptr->ContiguousPages;
 
-	// just copy what I dumped off my xbox on rgloader xD
-	memcpy((PVOID)Ptr, bSystemMemoryInfo, 0x30);
-
-	return 0x02DA0000;
+	return 0x02DA0000; // XBDM_NOERR
 }
 int ExportSub166() { DBGSTR("[HvP2] Called 166\n"); return 0; }
 int ExportSub167() { DBGSTR("[HvP2] Called 167\n"); return 0; }
